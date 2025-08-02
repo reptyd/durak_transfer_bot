@@ -1,6 +1,7 @@
 import re
 import aiohttp
 import asyncio
+import html
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -48,13 +49,17 @@ async def handle_tokens(message: Message):
                 status = resp.status
                 text = await resp.text()
         except Exception as e:
-            await message.answer(f"Ошибка при запросе к API: {e}")
+            await message.answer(f"Ошибка при запросе к API: <pre>{html.escape(str(e))}</pre>", parse_mode="HTML")
             return
 
     if status == 200:
         await message.answer("✅ Профиль успешно перенесён!")
     else:
-        await message.answer(f"❌ Ошибка переноса (код {status}):\n{text}")
+        safe_text = html.escape(text)
+        await message.answer(
+            f"❌ Ошибка переноса (код {status}):\n<pre>{safe_text}</pre>",
+            parse_mode="HTML"
+        )
 
 # ---------------- WEB SERVER ----------------
 
