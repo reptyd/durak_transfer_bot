@@ -2,7 +2,7 @@ import re
 import aiohttp
 import asyncio
 from aiohttp import web
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
@@ -18,8 +18,8 @@ dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 dp.include_router(router)
 
-PROFILE_RE = r'https://durak\.rstgames\.com/link/profile\?token=([a-zA-Z0-9_-]+)'
-USER_RE = r'https://durak\.rstgames\.com/link/user\?token=([a-zA-Z0-9_-]+)'
+PROFILE_RE = r'https:\/\/durak\.rstgames\.com\/link\/profile\?token=([a-zA-Z0-9_-]+)'
+USER_RE = r'https:\/\/durak\.rstgames\.com\/link\/user\?token=([a-zA-Z0-9_-]+)'
 
 @router.message()
 async def handle_tokens(message: Message):
@@ -56,17 +56,23 @@ async def handle_tokens(message: Message):
     else:
         await message.answer(f"❌ Ошибка переноса (код {status}):\n{text}")
 
+# ---------------- WEB SERVER ----------------
+
 async def ping(request):
     return web.Response(text="Bot is alive!")
 
-def run_webserver():
+async def run_webserver():
     app = web.Application()
     app.router.add_get("/", ping)
-    web.run_app(app, port=8080)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, port=8080)
+    await site.start()
+
+# ---------------- MAIN ----------------
 
 async def main():
-    import threading
-    threading.Thread(target=run_webserver).start()
+    await run_webserver()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
