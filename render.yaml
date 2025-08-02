@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: durak-transfer-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        value: <вставь токен бота здесь или укажи через dashboard>
