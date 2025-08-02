@@ -19,20 +19,27 @@ dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 dp.include_router(router)
 
-PROFILE_RE = r'https:\/\/durak\.rstgames\.com\/link\/profile\?token=([a-zA-Z0-9_-]+)'
-USER_RE = r'https:\/\/durak\.rstgames\.com\/link\/user\?token=([a-zA-Z0-9_-]+)'
-
 @router.message()
 async def handle_tokens(message: Message):
-    profile_match = re.search(PROFILE_RE, message.text)
-    user_match = re.search(USER_RE, message.text)
+    # Ищем все token=... в любых ссылках
+    tokens = re.findall(r'token=([a-zA-Z0-9._-]{10,})', message.text)
 
-    if not (profile_match and user_match):
-        await message.answer("Пожалуйста, отправьте 2 ссылки:\n1. Ссылка на профиль\n2. Ссылка на iCloud (из iOS)")
+    if len(tokens) != 2:
+        await message.answer(
+            "Пожалуйста, отправьте сообщение с двумя ссылками, содержащими токены.\n"
+            "Поддерживаются ссылки вида:\n"
+            "- https://durak.rstgames.com/link/profile?token=...\n"
+            "- https://durak.rstgames.com/play/?id_token=...\n"
+            "- https://durak.rstgames.com/link/user?token=..."
+        )
         return
 
-    profile_token = profile_match.group(1)
-    user_token = user_match.group(1)
+    # Принимаем оба токена в любом порядке
+    profile_token, user_token = tokens
+
+    # Пробуем угадать порядок по содержимому текста
+    if "user" in message.text and message.text.index("user") < message.text.index("token="):
+        user_token, profile_token = tokens
 
     payload = {
         "sourceProfileToken": profile_token,
