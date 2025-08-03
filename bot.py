@@ -1,75 +1,94 @@
-import re
 import logging
-import asyncio
+import html
+import re
 import aiohttp
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import Message
-from aiogram.utils.markdown import hquote
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.utils.markdown import hbold
+from aiogram.filters import CommandStart
 
-BOT_TOKEN = 'ВАШ_ТОКЕН'
+BOT_TOKEN = 'YOUR_BOT_TOKEN'
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-API_TRANSFER = 'https://durak.rstgames.com/api/v1/account/transfer'
-API_PROFILE = 'https://durak.rstgames.com/api/v1/user/me'
-
-
-async def extract_profile_token(id_token: str) -> str | None:
-    headers = {
-        "Authorization": f"Bearer {id_token}"
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.get(API_PROFILE, headers=headers) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            return data.get("profileToken")
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher(storage=MemoryStorage())
 
 
-@dp.message()
-async def handle_links(message: Message):
-    text = message.text.strip()
+async def extract_token_from_play_url(url: str) -> str | None:
+    """Пытается получить profileToken по ссылке на play"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                text = await resp.text()
+                token_match = re.search(r'"profileToken"\s*:\s*"([^"]+)"', text)
+                if token_match:
+                    return token_match.group(1)
+    except Exception as e:
+        logging.exception("Ошибка при извлечении токена")
+    return None
 
-    # Ссылки
-    id_token_match = re.search(r'durak\.rstgames\.com\/play\/\?[^ ]*id_token=([^&\s]+)', text)
-    user_token_match = re.search(r'durak\.rstgames\.com\/link\/user\?token=([a-zA-Z0-9_\-]+)', text)
 
-    if not (id_token_match and user_token_match):
-        return  # ждём обе ссылки
-
-    id_token = id_token_match.group(1)
-    user_token = user_token_match.group(1)
-
-    await message.answer("⏳ Получаю profileToken...")
-
-    profile_token = await extract_profile_token(id_token)
-
-    if not profile_token:
-        await message.answer("❌ Не удалось получить profileToken. Возможно, токен устарел или недействителен.")
-        return
-
+async def send_transfer_request(profile_token: str, user_token: str) -> tuple[int, str]:
+    url = 'https://durak.rstgames.com/api/v1/account/transfer'
+    headers = {"Content-Type": "application/json"}
     payload = {
         "sourceProfileToken": profile_token,
         "targetUserToken": user_token
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(API_TRANSFER, json=payload) as resp:
-            status = resp.status
-            content = await resp.text()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                text = await resp.text()
+                return resp.status, text
+    except Exception as e:
+        return 500, str(e)
+
+
+@dp.message(CommandStart())
+async def on_start(message: Message):
+    await message.answer(f"Привет! Пришли 2 ссылки:\n"
+                         f"1 — ссылка на профиль (с id_token)\n"
+                         f"2 — ссылка с токеном нового аккаунта (user token)")
+
+
+@dp.message()
+async def handle_tokens(message: Message):
+    urls = re.findall(r'https://durak\.rstgames\.com/\S+', message.text)
+    if len(urls) != 2:
+        await message.answer("❌ Пожалуйста, пришлите ровно 2 ссылки.")
+        return
+
+    play_url, user_url = urls
+
+    await message.answer("🔍 Получаю токены...")
+
+    profile_token = await extract_token_from_play_url(play_url)
+    if not profile_token:
+        await message.answer("❌ Не удалось получить profileToken из первой ссылки.")
+        return
+
+    user_token_match = re.search(r'token=([a-zA-Z0-9\.\-_]+)', user_url)
+    if not user_token_match:
+        await message.answer("❌ Не удалось извлечь userToken из второй ссылки.")
+        return
+
+    user_token = user_token_match.group(1)
+
+    await message.answer("🔄 Отправляю запрос на перенос профиля...")
+
+    status, text = await send_transfer_request(profile_token, user_token)
 
     if status == 200:
-        await message.answer("✅ Профиль успешно перенесён.")
+        await message.answer("✅ Профиль успешно перенесён!")
     else:
-        clean_text = re.sub(r'<[^>]+>', '', content)
-        await message.answer(f"❌ Ошибка переноса (код {status}):\n{hquote(clean_text)}", parse_mode=ParseMode.HTML)
+        escaped = html.escape(text)
+        await message.answer(f"❌ Ошибка переноса (код {status}):\n<pre>{escaped}</pre>")
 
 
-async def main():
-    logging.basicConfig(level=logging.INFO)
-    await dp.start_polling(bot)
-
-if __name__ == '__main__':
-    asyncio.run(main())
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(dp.start_polling(bot))
