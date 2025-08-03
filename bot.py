@@ -1,83 +1,55 @@
-import logging
-import aiohttp
-from aiogram import Bot, Dispatcher, F, types
-from aiogram.enums import ParseMode
-from aiogram.types import Message
-from aiogram.utils.markdown import hcode
-from aiohttp import web
-import asyncio
 import re
+import asyncio
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message
+from aiogram.client.default import DefaultBotProperties
+from aiohttp import ClientSession
 
-BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = "7957577211:AAHZ4XRF35VKC_trcbxF1Lw5kSwS3PlfG88"
 
-logging.basicConfig(level=logging.INFO)
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties())
 dp = Dispatcher()
 
-async def detect_profile_token(token: str) -> str | None:
-    url = "https://durak.rstgames.com/api/v1/user/me"
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=5) as resp:
-                if resp.status == 200:
-                    json_data = await resp.json()
-                    return json_data.get("profileToken")
-    except Exception:
-        return None
 
-async def try_transfer(profile_token: str, user_token: str) -> tuple[int, str]:
-    url = "https://durak.rstgames.com/api/v1/account/transfer"
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "sourceProfileToken": profile_token,
-        "targetUserToken": user_token
-    }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload, timeout=10) as resp:
-                text = await resp.text()
-                return resp.status, text
-    except Exception as e:
-        return 500, str(e)
+def extract_tokens(text):
+    token_pattern = r"(?:profile|user)?token=([\w\-_.]+)"
+    return re.findall(token_pattern, text)
+
 
 @dp.message(F.text)
 async def handle_tokens(message: Message):
-    tokens = re.findall(r"id_token=([\w\-\.]+)", message.text)
+    tokens = extract_tokens(message.text)
     if len(tokens) < 2:
-        await message.answer("❗ Отправьте 2 ссылки с `id_token` в одном сообщении.")
+        await message.reply("⚠️ Отправьте *две* ссылки, содержащие токены (одна от профиля, другая от нового аккаунта).")
         return
 
     token1, token2 = tokens[:2]
-    profile = await detect_profile_token(token1)
-    if profile:
-        profile_token, user_token = profile, token2
-    else:
-        profile = await detect_profile_token(token2)
-        if profile:
-            profile_token, user_token = profile, token1
-        else:
-            await message.answer("❌ Не удалось определить `profileToken`. Проверьте, что ссылки актуальны (до 5 минут).")
+
+    # Попробуем оба варианта — какой из них profile, какой user
+    pairs = [
+        {"sourceProfileToken": token1, "targetUserToken": token2},
+        {"sourceProfileToken": token2, "targetUserToken": token1}
+    ]
+
+    for i, payload in enumerate(pairs, start=1):
+        async with ClientSession() as session:
+            async with session.post("https://durak.rstgames.com/api/v1/account/transfer", json=payload) as resp:
+                status = resp.status
+                text = await resp.text()
+
+        if status == 200:
+            await message.reply("✅ Профиль успешно перенесён!")
+            return
+        elif status != 404:
+            await message.reply(f"❌ Ошибка переноса (код {status}):\n{text}")
             return
 
-    status, text = await try_transfer(profile_token, user_token)
-    if status == 200:
-        await message.answer("✅ Профиль успешно перенесён.")
-    else:
-        safe_text = re.sub(r"<[^>]+>", "", text)[:1000]
-        await message.answer(f"❌ Ошибка переноса (код {status}):\n{hcode(safe_text)}")
+    await message.reply("❌ Не удалось перенести. Вероятно, один из токенов устарел или невалиден.")
 
-# Keep-alive web server
-async def run_webserver():
-    app = web.Application()
-    app.add_routes([web.get("/", lambda request: web.Response(text="Bot is running."))])
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, port=8080)
-    await site.start()
 
 async def main():
-    await asyncio.gather(dp.start_polling(bot), run_webserver())
+    await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
