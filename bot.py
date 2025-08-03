@@ -12,7 +12,7 @@ from aiogram import Router
 from config import BOT_TOKEN
 
 bot = Bot(
-    token=BOT_TOKEN,
+    token=7957577211:AAHZ4XRF35VKC_trcbxF1Lw5kSwS3PlfG88,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher(storage=MemoryStorage())
