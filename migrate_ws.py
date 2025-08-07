@@ -7,6 +7,13 @@ from urllib.parse import urlparse, parse_qs
 import requests
 from websocket import create_connection
 
+# Optional: browser cookies auto-extraction
+try:
+    import browser_cookie3  # type: ignore
+    HAS_BCJ = True
+except Exception:
+    HAS_BCJ = False
+
 SERVERS = [
     "https://storage.yandexcloud.net/rst-durak/servers.json",
     "http://static.rstgames.com/durak/servers.json",
@@ -20,6 +27,7 @@ USER_AGENT = (
 
 SANITIZE = True
 COOKIE_HEADER = ""
+PREF_BROWSER = ""  # chrome|edge|firefox|brave|chromium|opera
 
 
 def sanitize_text(text: str) -> str:
@@ -88,6 +96,51 @@ def recv_all(ws, wait: float = 0.2, total: float = 3.0) -> list:
     return out
 
 
+def cj_to_cookie_header(cj) -> str:
+    pairs = []
+    seen = set()
+    for c in cj:
+        if (c.domain.endswith("rstgames.com") or c.domain.endswith(".rstgames.com")) and c.name not in seen:
+            seen.add(c.name)
+            pairs.append(f"{c.name}={c.value}")
+    return "; ".join(pairs)
+
+
+def auto_cookie_from_browsers(preferred: str = "") -> str:
+    if not HAS_BCJ:
+        return ""
+    order = []
+    pref = preferred.lower().strip()
+    if pref:
+        order = [pref]
+    else:
+        order = ["chrome", "edge", "brave", "chromium", "opera", "firefox"]
+
+    for name in order:
+        try:
+            if name == "chrome":
+                cj = browser_cookie3.chrome(domain_name="rstgames.com")
+            elif name == "edge":
+                cj = browser_cookie3.edge(domain_name="rstgames.com")
+            elif name == "brave":
+                cj = browser_cookie3.brave(domain_name="rstgames.com")
+            elif name == "chromium":
+                cj = browser_cookie3.chromium(domain_name="rstgames.com")
+            elif name == "opera":
+                cj = browser_cookie3.opera(domain_name="rstgames.com")
+            elif name == "firefox":
+                cj = browser_cookie3.firefox(domain_name="rstgames.com")
+            else:
+                continue
+            ck = cj_to_cookie_header(cj)
+            if ck:
+                print(f"Auto-cookie: picked {name}, {len(ck)} bytes")
+                return ck
+        except Exception:
+            continue
+    return ""
+
+
 def try_migrate(ws_url: str, source_token: str, target_token: str) -> bool:
     headers = {
         "Origin": "https://durak.rstgames.com",
@@ -126,14 +179,15 @@ def try_migrate(ws_url: str, source_token: str, target_token: str) -> bool:
 
 
 def main():
-    global SANITIZE, COOKIE_HEADER
+    global SANITIZE, COOKIE_HEADER, PREF_BROWSER
     if len(sys.argv) < 3:
-        print("Usage: python migrate_ws.py [--raw] [--cookie <cookie_string>|--cookie=<cookie_string>] <source_url> <target_url>")
+        print("Usage: python migrate_ws.py [--raw] [--cookie <cookie>|--cookie=<cookie>] [--auto-cookie[=<browser>]] <source_url> <target_url>")
         sys.exit(1)
 
     args = sys.argv[1:]
     i = 0
     parsed = []
+    want_auto_cookie = False
     while i < len(args):
         a = args[i]
         if a == "--raw":
@@ -148,12 +202,28 @@ def main():
             COOKIE_HEADER = args[i + 1]
             i += 2
             continue
+        if a == "--auto-cookie":
+            want_auto_cookie = True
+            i += 1
+            continue
+        if a.startswith("--auto-cookie="):
+            want_auto_cookie = True
+            PREF_BROWSER = a.split("=", 1)[1]
+            i += 1
+            continue
         parsed.append(a)
         i += 1
 
     if len(parsed) < 2:
-        print("Usage: python migrate_ws.py [--raw] [--cookie <cookie_string>|--cookie=<cookie_string>] <source_url> <target_url>")
+        print("Usage: python migrate_ws.py [--raw] [--cookie <cookie>|--cookie=<cookie>] [--auto-cookie[=<browser>]] <source_url> <target_url>")
         sys.exit(1)
+
+    if want_auto_cookie and not COOKIE_HEADER:
+        ck = auto_cookie_from_browsers(PREF_BROWSER)
+        if ck:
+            COOKIE_HEADER = ck
+        else:
+            print("Auto-cookie: not found or browser not supported; continue without Cookie")
 
     source_url = parsed[0]
     target_url = parsed[1]
