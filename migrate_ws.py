@@ -18,13 +18,15 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
 )
 
+SANITIZE = True
+
 
 def sanitize_text(text: str) -> str:
     """Mask potentially sensitive tokens (JWT-like) in output."""
+    if not SANITIZE:
+        return text
     try:
-        # Mask long JWT-like strings
         text = re.sub(r"eyJ[\w\-]{20,}\.[\w\-]+\.[\w\-]+", "[JWT]", text)
-        # Mask generic long base64-ish blobs
         text = re.sub(r"[A-Za-z0-9_\-]{80,}", "[BLOB]", text)
     except Exception:
         pass
@@ -36,9 +38,9 @@ def print_sanitized(prefix: str, payload):
         print(prefix, sanitize_text(payload))
     else:
         try:
-            s = json.dumps(payload, ensure_ascii=False)[:2000]
+            s = json.dumps(payload, ensure_ascii=False)
         except Exception:
-            s = str(payload)[:2000]
+            s = str(payload)
         print(prefix, sanitize_text(s))
 
 
@@ -94,13 +96,11 @@ def try_migrate(ws_url: str, source_token: str, target_token: str) -> bool:
     }
     ws = create_connection(ws_url, header=[f"{k}: {v}" for k, v in headers.items()], timeout=10)
     try:
-        # Step 1: auth
         auth_msg = {"cmd": "web_auth", "id_token": source_token, "platform": "web"}
         ws.send(json.dumps(auth_msg))
         auth_resp = recv_all(ws)
         print_sanitized("AUTH RESP:", auth_resp)
 
-        # Step 2: try candidate migration commands
         candidates = [
             {"cmd": "migrate_tokens", "source_id_token": source_token, "target_id_token": target_token},
             {
@@ -114,7 +114,6 @@ def try_migrate(ws_url: str, source_token: str, target_token: str) -> bool:
             ws.send(json.dumps(payload))
             resp = recv_all(ws)
             print_sanitized(f"TRY {payload['cmd']} RESP:", resp)
-            # naive success heuristic
             if any(isinstance(x, str) and re.search(r"(success|ok|done|migrat)", x, re.I) for x in resp):
                 return True
         return False
@@ -123,11 +122,21 @@ def try_migrate(ws_url: str, source_token: str, target_token: str) -> bool:
 
 
 def main():
+    global SANITIZE
     if len(sys.argv) < 3:
-        print("Usage: python migrate_ws.py <source_url> <target_url>")
+        print("Usage: python migrate_ws.py [--raw] <source_url> <target_url>")
         sys.exit(1)
-    source_url = sys.argv[1]
-    target_url = sys.argv[2]
+
+    args = sys.argv[1:]
+    if args and args[0] == "--raw":
+        SANITIZE = False
+        args = args[1:]
+    if len(args) < 2:
+        print("Usage: python migrate_ws.py [--raw] <source_url> <target_url>")
+        sys.exit(1)
+
+    source_url = args[0]
+    target_url = args[1]
     try:
         source_token = extract_token(source_url)
         target_token = extract_token(target_url)
