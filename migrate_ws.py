@@ -141,6 +141,27 @@ def auto_cookie_from_browsers(preferred: str = "") -> str:
     return ""
 
 
+def preflight_cookies() -> str:
+    """Try to obtain DDoS-Guard cookies via a simple GET to the site."""
+    try:
+        sess = requests.Session()
+        sess.headers.update({
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.6,en;q=0.5",
+            "Connection": "keep-alive",
+        })
+        # Visiting root and play should set ddg cookies if available
+        for url in ["https://durak.rstgames.com/", "https://durak.rstgames.com/play/"]:
+            try:
+                sess.get(url, timeout=10)
+            except Exception:
+                pass
+        return cj_to_cookie_header(sess.cookies)
+    except Exception:
+        return ""
+
+
 def try_migrate(ws_url: str, source_token: str, target_token: str) -> bool:
     headers = {
         "Origin": "https://durak.rstgames.com",
@@ -223,7 +244,15 @@ def main():
         if ck:
             COOKIE_HEADER = ck
         else:
-            print("Auto-cookie: not found or browser not supported; continue without Cookie")
+            print("Auto-cookie: not found or browser not supported; trying preflight...")
+
+    if not COOKIE_HEADER:
+        ck2 = preflight_cookies()
+        if ck2:
+            COOKIE_HEADER = ck2
+            print("Preflight cookie obtained (len):", len(COOKIE_HEADER))
+        else:
+            print("Preflight: no cookies obtained; proceeding without Cookie header")
 
     source_url = parsed[0]
     target_url = parsed[1]
