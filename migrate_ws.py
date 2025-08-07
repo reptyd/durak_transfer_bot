@@ -19,6 +19,7 @@ USER_AGENT = (
 )
 
 SANITIZE = True
+COOKIE_HEADER = ""
 
 
 def sanitize_text(text: str) -> str:
@@ -93,7 +94,10 @@ def try_migrate(ws_url: str, source_token: str, target_token: str) -> bool:
         "User-Agent": USER_AGENT,
         "Pragma": "no-cache",
         "Cache-Control": "no-cache",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.6,en;q=0.5",
     }
+    if COOKIE_HEADER:
+        headers["Cookie"] = COOKIE_HEADER
     ws = create_connection(ws_url, header=[f"{k}: {v}" for k, v in headers.items()], timeout=10)
     try:
         auth_msg = {"cmd": "web_auth", "id_token": source_token, "platform": "web"}
@@ -122,21 +126,37 @@ def try_migrate(ws_url: str, source_token: str, target_token: str) -> bool:
 
 
 def main():
-    global SANITIZE
+    global SANITIZE, COOKIE_HEADER
     if len(sys.argv) < 3:
-        print("Usage: python migrate_ws.py [--raw] <source_url> <target_url>")
+        print("Usage: python migrate_ws.py [--raw] [--cookie <cookie_string>|--cookie=<cookie_string>] <source_url> <target_url>")
         sys.exit(1)
 
     args = sys.argv[1:]
-    if args and args[0] == "--raw":
-        SANITIZE = False
-        args = args[1:]
-    if len(args) < 2:
-        print("Usage: python migrate_ws.py [--raw] <source_url> <target_url>")
+    i = 0
+    parsed = []
+    while i < len(args):
+        a = args[i]
+        if a == "--raw":
+            SANITIZE = False
+            i += 1
+            continue
+        if a.startswith("--cookie="):
+            COOKIE_HEADER = a.split("=", 1)[1]
+            i += 1
+            continue
+        if a == "--cookie" and i + 1 < len(args):
+            COOKIE_HEADER = args[i + 1]
+            i += 2
+            continue
+        parsed.append(a)
+        i += 1
+
+    if len(parsed) < 2:
+        print("Usage: python migrate_ws.py [--raw] [--cookie <cookie_string>|--cookie=<cookie_string>] <source_url> <target_url>")
         sys.exit(1)
 
-    source_url = args[0]
-    target_url = args[1]
+    source_url = parsed[0]
+    target_url = parsed[1]
     try:
         source_token = extract_token(source_url)
         target_token = extract_token(target_url)
@@ -151,6 +171,8 @@ def main():
         sys.exit(3)
 
     print("WS endpoints:", ws_list)
+    if COOKIE_HEADER:
+        print("Using Cookie header (len):", len(COOKIE_HEADER))
     for ws_url in ws_list:
         print("Connecting:", ws_url)
         try:
@@ -159,7 +181,7 @@ def main():
                 print("OK: перенос инициирован")
                 sys.exit(0)
         except Exception as e:
-            print_sanitized("Fail:", f"{ws_url} {e}")
+            print_sanitized("Fail:", f"\n{ws_url}\n{e}")
     print("Не удалось выполнить перенос. Скопируйте ответы выше и пришлите их.")
     sys.exit(4)
 
